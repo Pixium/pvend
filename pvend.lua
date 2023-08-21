@@ -3,28 +3,8 @@ COULD BE UNSTABLE, REPORT ISSUES AT
 https://github.com/Pixium/pvend
 ]]
 
-local kristPKey = nil   --required
-local shopName = nil    --required
-local item = {
-  name = nil,           --required
-  displayName = nil,    --required
-  price = nil           --required
-}
-
-local shopsync = {
-  enabled = false,
-  shopsyncModem = peripheral.find("modem"),
-  name = nil,
-  description = nil,
-  owner = nil,
-  location = {
-    coordinates = nil,
-    description = nil,
-    dimension = nil
-  }
-}
-
-local version = "0.1"
+local meta = require("meta")
+local config = require("config")
 
 function drawMonitor(monitor, address, stock, heartbeat)
   local w,h = monitor.getSize()
@@ -38,7 +18,7 @@ function drawMonitor(monitor, address, stock, heartbeat)
   monitor.setBackgroundColor(colors.black)
 
   monitor.setTextColor(colors.purple)
-  drawCentered(1,shopName)
+  drawCentered(1,config.vendingMachineName)
   monitor.setTextColor(colors.white)
 
   monitor.setTextColor(colors.lime)
@@ -47,11 +27,11 @@ function drawMonitor(monitor, address, stock, heartbeat)
   monitor.setTextColor(colors.white)
 
   monitor.setTextColor(colors.orange)
-  drawCentered(3, item.displayName)
+  drawCentered(3, config.item.displayName)
   monitor.setTextColor(colors.white)
 
   monitor.setTextColor(colors.red)
-  drawCentered(4,item.price.."kst/each")
+  drawCentered(4,config.item.price.."kst/each")
   monitor.setTextColor(colors.white)
 
   if stock == 0 then
@@ -82,28 +62,28 @@ function genShopsyncMessage(stock, address)
   return {
     type = "ShopSync",
     info = {
-      name = shopsync.name or shopName,
-      description = shopsync.description,
-      owner = shopsync.owner,
+      name = config.shopsync.name or config.vendingMachineName,
+      description = config.shopsync.description,
+      owner = config.shopsync.owner,
       computerID = os.computerID(),
       software = {
-        name = "pvend",
-        version = version
+        name = meta.name,
+        version = meta.version
       },
-      location = shopsync.location
+      location = config.shopsync.location
     },
     items = {
       {
         prices = {
           {
-            value = item.price,
+            value = config.item.price,
             currency = "KST",
             address = address
           }
         },
         item = {
-          name = item.name,
-          displayName = item.displayName,
+          name = config.item.name,
+          displayName = config.item.displayName,
           nbt = nil --TODO
         },
         dynamicPrice = false,
@@ -115,7 +95,8 @@ function genShopsyncMessage(stock, address)
   }
 end
 
-local monitor = peripheral.wrap("top")
+local monitor = peripheral.wrap("top") or {}
+
 monitor.setTextScale(0.5)
 
 --implement "Terminated" screen on monitor when terminated.
@@ -204,7 +185,7 @@ function countStock()
   for i=1,16 do
     local detail = turtle.getItemDetail(i)
 
-    if detail and detail.name == item.name then
+    if detail and detail.name == config.item.name then
       count = count + detail.count
     end
   end
@@ -222,7 +203,7 @@ function dropItems(count)
   for i=1,16 do
     local detail = turtle.getItemDetail(i)
 
-    if detail and detail.name == item.name then
+    if detail and detail.name == config.item.name then
       local toDrop = math.min(count, detail.count)
 
       turtle.select(i)
@@ -246,7 +227,7 @@ if _G.vendingKristWS then
   end
   _G.vendingKristWS = nil
 end
-_G.vendingKristWS = kristly.websocket(kristPKey)
+_G.vendingKristWS = kristly.websocket(config.kristPrivateKey)
 
 local krist = _G.vendingKristWS
 
@@ -255,7 +236,7 @@ local stockCache = countStock()
 local drawUI = false
 local s,e = pcall(function()
   -- Verify auth
-  local res = kristly.authenticate(kristPKey)
+  local res = kristly.authenticate(config.kristPrivateKey)
 
   if not res then error("Failed to authenticate on krist API: No response") end
 
@@ -278,7 +259,7 @@ local s,e = pcall(function()
     sleep(2.5)
 
     krist:subscribe("ownTransactions")
-    krist:upgradeConnection(kristPKey)
+    krist:upgradeConnection(config.kristPrivateKey)
     krist:simpleWSMessage("me")
 
     drawUI = true
@@ -310,21 +291,21 @@ local s,e = pcall(function()
 
         if not (meta.donate == "true") then --this doesnt seem to work?
           local stock = countStock()
-          local itemsToDrop = math.min(stock, math.floor(ev.transaction.value/item.price))
-          local refund = math.floor(ev.transaction.value-itemsToDrop*item.price)
+          local itemsToDrop = math.min(stock, math.floor(ev.transaction.value/config.item.price))
+          local refund = math.floor(ev.transaction.value-itemsToDrop*config.item.price)
 
           if stock == 0 then
-            kristly.makeTransaction(kristPKey, refundAddress, refund, "message=This item is out of stock!")
+            kristly.makeTransaction(config.kristPrivateKey, refundAddress, refund, "message=This item is out of stock!")
             log = log .. "Stock: 0, refunding "..refund.."kst"
           else
             if refund > 0 then
               log = log .. "Overpaid by "..refund.." krist, refunding\n"
-              kristly.makeTransaction(kristPKey, refundAddress, refund, "message=Here are the funds remaining after your purchase!")
+              kristly.makeTransaction(config.kristPrivateKey, refundAddress, refund, "message=Here are the funds remaining after your purchase!")
             end
 
             dropItems(itemsToDrop)
             if not lastShopsyncTransmit or os.epoch("utc")-lastShopsyncTransmit >= 30000 then
-              shopsync.shopsyncModem.transmit(9773,9773,genShopsyncMessage(stock-itemsToDrop, address))
+              config.shopsync.shopsyncModem.transmit(9773,9773,genShopsyncMessage(stock-itemsToDrop, address))
               lastShopsyncTransmit = os.epoch("utc")
             end
 
@@ -355,16 +336,16 @@ local s,e = pcall(function()
     end
   end, function()
     -- Shopsync
-    while not shopsync.enabled do
+    while not config.shopsync.enabled do
       sleep(120)
     end
 
     while true do
-      if not shopsync.shopsyncModem then
+      if not config.shopsync.shopsyncModem then
         error("Invalid/missing shopsync modem")
       end
 
-      shopsync.shopsyncModem.transmit(9773,9773,genShopsyncMessage(countStock(), address))
+      config.shopsync.shopsyncModem.transmit(9773,9773,genShopsyncMessage(countStock(), address))
       sleep(math.random(1,15)+15)
     end
   end)
